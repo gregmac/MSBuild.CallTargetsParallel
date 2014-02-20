@@ -1,0 +1,317 @@
+<!--=======================================================================================
+Licensed under BSD (http://opensource.org/licenses/bsd-license.php)
+
+Copyright (c) 2014, Greg MacLellan
+All rights reserved. 
+
+Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice, this list of conditions and the following disclaimer in the documentation and/or other materials provided with the distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+  
+===========================================================================================-->
+<Project xmlns='http://schemas.microsoft.com/developer/msbuild/2003' ToolsVersion="4.0">
+    <!-- 
+    CallTargetsParallel - Runs multiple targets in parallel in new instances of msbuild
+    
+    Usage:
+    
+        <CallTargetsParallel Targets="Target1;Target2" GlobalProperties="PropertyName1;PropertyName2" />
+    
+        Runs Target1 and Target2 in this project file, passing along the current values of the properties PropertyName1 and PropertyName2. 
+        
+        
+        <ItemGroup>
+            <ParallelTargets Include="_global">
+                <Property1>value1</Property1>
+            </ParallelTargets>
+            <ParallelTargets Include="Target1">
+                <Property2>value2</Property2> 
+            </ParallelTargets>
+            <ParallelTargets Include="TargetTwo">
+                <Targets>Target2</Targets>
+                <Property1>some "value"</Property1>
+            </ParallelTargets>
+            <ParallelTargets Include="DualExample">
+                <Targets>Target1;Target2</Targets>
+            </ParallelTargets>
+            <ParallelTargets Include="OtherProject">
+                <MSBuildFile>myproject.proj</MSBuildFile>
+                <Targets>Build</Targets>
+                <Property3>$(Property3)</Property3>
+            </ParallelTargets>
+        </ItemGroup>
+        <CallTargetsParallel Targets="@(ParallelTargets)" GlobalProperties="Property5" />
+        
+        This will invoke 4 msbuild instances in parallel:
+        * instance "Target1" will run target Target1, with values Property1=value1, Property2=value2, and Property5 (defined elsewhere)
+        * instance "TargetTwo" will run target Target2, with values Property1=some "value", and Property5 (defined elsewhere)
+        * instance "DualExample" will run targets Target1 and Target2, with values Property1=value1, and Property5 (defined elsewhere)
+        * instance "OtherProject" will run the Build target in myproject.proj, with the current values of Property3 and Property5 (both defined elsehwhere)
+    
+    
+    Item definitions:
+        * Include= must have a unique name in the group
+        * The name "_global" is reserved to define property values that apply to all other items in the group. No targets will be run even if specified.
+        * The metadata in each include are used as property names, and they cannot be MSBuild reserved names (http://msdn.microsoft.com/en-us/library/ms164313.aspx)
+        * The <Targets> metadata item specifies which target(s) to actually invoke. If not specified, the item name (Include= value) is used
+        * The <MSBulidFile> metadata item specifies which msbuild project file to run. If not specified, the current file is used.
+        
+        
+    Limitations:
+        * Property values defined in the target where <CallTargetsParallel/> is invoked cannot be passed. Use DependsOnTargets if other targets
+          need to be called to set property values.
+    
+    Notes:
+        * This is loosely based 
+    -->
+    <UsingTask TaskName="CallTargetsParallel" TaskFactory="CodeTaskFactory" AssemblyFile="$(MSBuildToolsPath)\Microsoft.Build.Tasks.v4.0.dll">
+        <ParameterGroup>
+            <Targets ParameterType="Microsoft.Build.Framework.ITaskItem[]" Required="true" />
+            <GlobalProperties ParameterType="System.String" Required="false" />
+        </ParameterGroup>
+        <Task>
+            <Reference Include="Microsoft.Build"/>
+            <Code Type="Class" Language="cs"><![CDATA[
+                using System;
+                using System.Web;
+                using System.Linq;
+                using System.Collections.Generic;
+                using System.Text;
+                using System.Text.RegularExpressions;
+                using System.Reflection;
+                using System.Diagnostics;
+                using Microsoft.Build.Framework;
+                using Microsoft.Build.Utilities;
+
+                public class CallTargetsParallel : Microsoft.Build.Utilities.Task
+                {
+                    public ITaskItem[] Targets { get; set; }
+                    public string GlobalProperties { get; set; }
+                    
+                    public override bool Execute()
+                    {
+                        var defaultProjectFile = BuildEngine.GetProjectPath();
+                        
+                        var globalValues = new Dictionary<string,string>();
+                        
+                        // find global values from GlobalProperties
+                        var globalPropertyNames = GlobalProperties.Split(';');
+                        foreach(var item in BuildEngine.GetProperties().Where(x => globalPropertyNames.Contains(x.Key))) globalValues.Add(item.Key, item.Value);
+                        
+                        // find global values from Target _global 
+                        var globalTarget = Targets.FirstOrDefault(x => x.ItemSpec == "_global");
+                        if (globalTarget != null)
+                        {
+                            foreach (var item in GetMetadataValues(globalTarget).Where(x => !DisallowedPropertyMetadata.Contains(x.Key))) globalValues[item.Key] = item.Value;
+                            
+                        }
+                        
+                        
+                        
+                        foreach (var item in globalValues)
+                        {
+                            Log.LogMessage("[PARALLEL _global] Property: {0} = {1}", item.Key, item.Value);
+                        }
+                        
+                        
+                        var tasks  = new List<System.Threading.Tasks.Task>();
+                        foreach (var target in Targets.Where(x => !x.ItemSpec.StartsWith("_"))) 
+                        {
+                            var logPrefix = string.Format("[PARALLEL {0}]", target.ItemSpec);
+                            
+                            var targetProperties = GetMetadataValues(target);
+                            var properties = targetProperties.Where(x => !DisallowedPropertyMetadata.Contains(x.Key))
+                                                .Concat(globalValues.Where( x=> !targetProperties.Keys.Contains(x.Key)));
+                            
+                            var targets = targetProperties.ContainsKey("Targets") ? targetProperties["Targets"] : target.ItemSpec;
+                            
+                            var projectFile = targetProperties.ContainsKey("MSBuildFile") ? targetProperties["MSBuildFile"] : defaultProjectFile;
+                            
+                            if (!System.IO.File.Exists(projectFile)) {
+                                Log.LogError("{0} Project file {1} does not exist!", logPrefix, projectFile);
+                            }
+                            else 
+                            {
+                            
+                                Log.LogMessage(MessageImportance.High, "{0} Targets: {1}", logPrefix, targets);
+                                Log.LogMessage("{0} Project: {1}", logPrefix, projectFile);
+                                foreach (var item in properties)
+                                {
+                                    Log.LogMessage("{0} Property: {1} = {2}", logPrefix, item.Key, item.Value);
+                                }
+                                
+                                tasks.Add( System.Threading.Tasks.Task.Factory.StartNew(() => {
+                                    ExecuteMsBuild(
+                                        logPrefix,
+                                        projectFile,
+                                        targets,
+                                        properties
+                                        ); 
+                                }) );
+                            }
+                        }
+                        
+                        System.Threading.Tasks.Task.WaitAll(tasks.ToArray());
+                        
+                        return true;
+                    }
+                    
+                    public static string[] WellKnownMetadata = {"FullPath","Directory","RootDir","Filename","Extension","RelativeDir","RecursiveDir","Identity","ModifiedTime","CreatedTime","AccessedTime"};
+                    public static string[] DisallowedPropertyMetadata = {"Targets","MSBuildFile"};
+                    
+                    protected IDictionary<string,string> GetMetadataValues(ITaskItem item) 
+                    {
+                        return item.MetadataNames.Cast<string>()
+                            .Where(x => !WellKnownMetadata.Contains(x))
+                            .ToDictionary(x => x, x => item.GetMetadata(x));
+                    }
+                    
+                    
+                    
+                    public void ExecuteMsBuild(string logPrefix, string projectFile, string targets, IEnumerable<KeyValuePair<string,string>> properties) 
+                    {
+                        var propertiesString = string.Join(";", properties.Select(x => string.Format("{0}=\"{1}\"", x.Key, x.Value.Replace("\"","\\\""))));
+                        
+                        var msbuildParams = string.Format("\"{0}\" /t:{1} /p:{2}",
+                                          projectFile,
+                                          targets,
+                                          propertiesString);
+                                          
+                        Log.LogCommandLine(string.Format("{0} Executing: msbuild.exe {1}", logPrefix, msbuildParams));
+                        
+                        using (var proc = new Process())
+                        {
+                            var startInfo = new ProcessStartInfo("msbuild.exe", msbuildParams)
+                            {
+                                UseShellExecute = false,
+                                CreateNoWindow = true,
+                                WorkingDirectory = System.IO.Directory.GetCurrentDirectory(),
+                                RedirectStandardOutput = true,
+                                RedirectStandardError = true
+                            };
+                            
+                            // stderr is logged as errors
+                            proc.ErrorDataReceived += (sender, e) =>
+                                                          {
+                                                              if (e.Data != null)
+                                                              {
+                                                                  Log.LogError("{0} ** {1}", logPrefix, e.Data);
+                                                              }
+                                                          };
+
+                            var nullReceived = false;
+                            var buildFailed = false;
+                            var captureMsbuildErrorOutput = false;
+                            var msbuildErrorOutput = new StringBuilder();
+                            proc.OutputDataReceived += (sender, e) =>
+                                {
+                                    if (e.Data != null)
+                                    {
+                                        try
+                                        {
+                                            if (Regex.Match(e.Data, @"\d+ Warning\(s\)").Success) {
+                                                // once we see "x Warning(s)" we stop capturing error output
+                                                captureMsbuildErrorOutput = false;
+                                            }
+                                            if (captureMsbuildErrorOutput) {
+                                                // capture all error output to display later
+                                                msbuildErrorOutput.AppendFormat("** {0}\n", e.Data);
+                                            }
+                                            
+                                            if (e.Data == "Build FAILED.") {
+                                                buildFailed = true; // once build fails, cause all lines to be highlighted as important
+                                                captureMsbuildErrorOutput = true; // start capturing error output after this line 
+                                            }
+                                            
+                                            Log.LogMessage(buildFailed ? MessageImportance.High : MessageImportance.Normal,  "{0} ** {1}", logPrefix, e.Data);
+                                        }
+                                        catch
+                                        {
+                                            // do nothing. We have a race condition here with the MSBuild host being killed and the logging still trying to occur.
+                                            // The MsBuildExtensionPack did this, keeping in place for now.
+                                        }
+                                    } 
+                                    else 
+                                    {
+                                        // null signals end of output
+                                        nullReceived = true;
+                                    }
+                                };
+
+                            proc.StartInfo = startInfo;
+                            proc.Start();
+                            
+                            proc.BeginOutputReadLine();
+                            proc.BeginErrorReadLine();
+                            
+                            proc.WaitForExit(int.MaxValue);
+                            // note, WaitForExit does not mean we're done reading output, so we wait until we get a NULL
+                            while (!nullReceived) System.Threading.Thread.Sleep(100);
+                            
+                
+                            if (proc.ExitCode != 0)
+                            {
+                                Log.LogError("{0} Exit code {1}\n{2}", logPrefix, proc.ExitCode, msbuildErrorOutput.ToString().TrimEnd());
+                            } 
+                            else 
+                            {
+                                Log.LogMessage("{0} Exit code {1}", logPrefix, proc.ExitCode);
+                            }
+                        }
+                        
+                    }
+                }
+                
+                public static class BuildEngineExtensions
+                {
+                    const BindingFlags bindingFlags = BindingFlags.NonPublic |
+                        BindingFlags.FlattenHierarchy |
+                        BindingFlags.Instance |
+                        BindingFlags.Public;
+
+                    public static Microsoft.Build.Execution.ProjectInstance GetProjectInstance(this IBuildEngine buildEngine)
+                    {
+                        var buildEngineType = buildEngine.GetType();
+                        var callbackField = buildEngineType.GetField("targetBuilderCallback", bindingFlags);
+                        if (callbackField == null)
+                        {
+                            throw new Exception("Could not extract targetBuilderCallback from " + buildEngineType.FullName);
+                        }
+                        var callback = callbackField.GetValue(buildEngine);
+                        var targetCallbackType = callback.GetType();
+                        var instanceField = targetCallbackType.GetField("projectInstance", bindingFlags);
+                        if (instanceField == null)
+                        {
+                            throw new Exception("Could not extract projectInstance from " + targetCallbackType.FullName);
+                        }
+                        return (Microsoft.Build.Execution.ProjectInstance)instanceField.GetValue(callback);
+                    }
+
+                    public static string GetProjectPath(this IBuildEngine buildEngine)
+                    {
+                        var projectFilePath = buildEngine.ProjectFileOfTaskNode;
+                        if (System.IO.File.Exists(projectFilePath))
+                        {
+                            return projectFilePath;
+                        }
+                        return buildEngine.GetProjectInstance().FullPath;
+                    }
+                    
+                    
+                    public static IDictionary<string,string> GetProperties(this IBuildEngine buildEngine)
+                    {
+                        return buildEngine.GetProjectInstance().Properties
+                            .Where(x => Environment.GetEnvironmentVariable(x.Name) != x.EvaluatedValue)
+                            .ToDictionary(x => x.Name, x => x.EvaluatedValue);
+                    }
+                    
+                    
+                }
+            ]]></Code>
+        </Task>
+    </UsingTask>
+</Project>

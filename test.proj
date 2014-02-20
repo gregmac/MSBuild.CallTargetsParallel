@@ -1,0 +1,71 @@
+<Project ToolsVersion="4.0" DefaultTargets="GroupBased" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+    <Import Project="CallTargetsParallel.tasks"/>
+    
+    <PropertyGroup>
+        <GlobalValue1>aaa</GlobalValue1>
+        <GlobalValue2>bbb</GlobalValue2>
+    </PropertyGroup>
+    
+    <Target Name="OverrideGlobals">
+        <PropertyGroup>
+            <GlobalValue1 Condition="$(Caps)==1">AAAA</GlobalValue1>
+            <GlobalValue2>BBBBB</GlobalValue2>
+            <TaskValue1>XX</TaskValue1>            
+        </PropertyGroup>
+    </Target>
+    
+    <Target Name="GroupBased" DependsOnTargets="">
+        <CallTarget Targets="OverrideGlobals" />
+        <ItemGroup>
+            <!-- Use Include="_global" to specify properties that get applied to all other items. The properties contained inside will be passed (unless overridden) to all other targets -->
+            <ParallelTargets Include="_global">
+                <param0>value</param0>
+                <param1>value0</param1>
+            </ParallelTargets>
+            
+            <!-- Each target needs a unique name specified as the "Include" value. If no <Targets> element is specified, this is also used as the Target name -->
+            <ParallelTargets Include="test1">
+                <Targets>Test1</Targets> <!-- Optionally, specify the Target(s) (separated by semi-colons) to call -->
+                <param1>value1,withcomma</param1> <!-- everything else is considered parameters -->
+            </ParallelTargets>
+            <ParallelTargets Include="test2">
+                <param2>value"2"</param2>
+            </ParallelTargets>
+            <ParallelTargets Include="test3">
+                <Targets>Test1;Test2</Targets>
+                <param1>this was called from test 3</param1>
+            </ParallelTargets>
+        </ItemGroup>
+        
+        <Message Text="Parallel test start" />
+        <CallTargetsParallel Targets="@(ParallelTargets)" GlobalProperties="GlobalValue1;GlobalValue2;TaskValue1" />
+        <Message Text="Parallel test complete" />
+    </Target>
+    
+    
+    <Target Name="Stringbased">
+        <CallTargetsParallel Targets="Test1;TestError" GlobalProperties="GlobalValue1;GlobalValue2;TaskValue1" />
+        <Message Text="Parallel test complete" />
+    </Target>
+    
+    <Target Name="Test1">
+        <Message Text="This is target test1" />
+        <CallTarget Targets="DisplayProperties" />
+    </Target>
+    <Target Name="Test2">
+        <Message Text="This is target test2" />
+        <CallTarget Targets="DisplayProperties" />
+    </Target>
+    <Target Name="TestError">
+        <Error Text="Testing failure" />
+    </Target>
+    <Target Name="DisplayProperties">
+        <Message Text="param0 = $(param0)" />
+        <Message Text="param1 = $(param1)" />
+        <Message Text="param2 = $(param2)" />
+        <Message Text="GlobalValue1 = $(GlobalValue1)" />
+        <Message Text="GlobalValue2 = $(GlobalValue2)" />
+        <Message Text="TaskValue1 = $(TaskValue1)" />
+    </Target>
+  
+</Project>
