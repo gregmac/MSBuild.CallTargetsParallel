@@ -174,7 +174,7 @@ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND 
                     
                     public void ExecuteMsBuild(string logPrefix, string projectFile, string targets, IEnumerable<KeyValuePair<string,string>> properties) 
                     {
-                        var propertiesString = string.Join(";", properties.Select(x => string.Format("{0}=\"{1}\"", x.Key, x.Value.Replace("\"","\\\""))));
+                        var propertiesString = string.Join(";", properties.Select(x => string.Format("{0}=\"{1}\"", x.Key, x.Value.Replace("\"","\\\"").Replace("\\","\\\\"))));
                         
                         var msbuildParams = string.Format("\"{0}\" /t:{1} /p:{2}",
                                           projectFile,
