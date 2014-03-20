@@ -110,15 +110,13 @@ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND 
                             
                         }
                         
-                        
-                        
                         foreach (var item in globalValues)
                         {
                             Log.LogMessage("[PARALLEL _global] Property: {0} = {1}", item.Key, item.Value);
                         }
                         
                         
-                        var tasks  = new List<System.Threading.Tasks.Task>();
+                        var tasks  = new Dictionary<string,System.Threading.Tasks.Task<int>>();
                         foreach (var target in Targets.Where(x => !x.ItemSpec.StartsWith("_"))) 
                         {
                             var logPrefix = string.Format("[PARALLEL {0}]", target.ItemSpec);
@@ -144,20 +142,27 @@ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND 
                                     Log.LogMessage("{0} Property: {1} = {2}", logPrefix, item.Key, item.Value);
                                 }
                                 
-                                tasks.Add( System.Threading.Tasks.Task.Factory.StartNew(() => {
-                                    ExecuteMsBuild(
-                                        logPrefix,
-                                        projectFile,
-                                        targets,
-                                        properties
-                                        ); 
-                                }) );
+                                tasks.Add(target.ItemSpec, 
+                                    System.Threading.Tasks.Task<int>.Factory.StartNew(() => {
+                                        return ExecuteMsBuild(
+                                            logPrefix,
+                                            projectFile,
+                                            targets,
+                                            properties
+                                            ); 
+                                    }));
                             }
                         }
                         
-                        System.Threading.Tasks.Task.WaitAll(tasks.ToArray());
+                        System.Threading.Tasks.Task.WaitAll(tasks.Values.ToArray());
                         
-                        return true;
+                        foreach (var item in tasks.Where(x => x.Value.Result != 0))
+                        {
+                            Log.LogWarning("[PARALLEL {0}] FAILED with exit code {1}", item.Key, item.Value.Result);
+                        }
+                        
+                        // return true if there are no tasks with errors
+                        return (tasks.Count(x => x.Value.Result != 0) == 0);
                     }
                     
                     public static string[] WellKnownMetadata = {"FullPath","Directory","RootDir","Filename","Extension","RelativeDir","RecursiveDir","Identity","ModifiedTime","CreatedTime","AccessedTime"};
@@ -172,16 +177,16 @@ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND 
                     
                     
                     
-                    public void ExecuteMsBuild(string logPrefix, string projectFile, string targets, IEnumerable<KeyValuePair<string,string>> properties) 
+                    public int ExecuteMsBuild(string logPrefix, string projectFile, string targets, IEnumerable<KeyValuePair<string,string>> properties) 
                     {
-                        var propertiesString = string.Join(";", properties.Select(x => string.Format("{0}=\"{1}\"", x.Key, x.Value.Replace("\"","\\\"").Replace("\\","\\\\"))));
+                        var propertiesString = string.Join(";", properties.Select(x => EscapeMsbuildCommandLineParameter(x.Key, x.Value)));
                         
                         var msbuildParams = string.Format("\"{0}\" /t:{1} /p:{2}",
                                           projectFile,
                                           targets,
                                           propertiesString);
                                           
-                        Log.LogCommandLine(string.Format("{0} Executing: msbuild.exe {1}", logPrefix, msbuildParams));
+                        Log.LogMessage(string.Format("{0} Executing: msbuild.exe {1}", logPrefix, msbuildParams));
                         
                         using (var proc = new Process())
                         {
@@ -261,6 +266,7 @@ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND 
                             {
                                 Log.LogMessage("{0} Exit code {1}", logPrefix, proc.ExitCode);
                             }
+                            return proc.ExitCode;
                         }
                         
                     }
