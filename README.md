@@ -18,6 +18,14 @@ A simple use is:
 Runs Target1 and Target2 in this project file, passing along the current values of the properties PropertyName1 and PropertyName2. 
 
 
+#### Installation
+
+Include the CallTargetsParallel.tasks file somewhere in your project, then in the MSBuild file include the line:
+
+```xml
+<Import Project="CallTargetsParallel.tasks"/>
+```
+
 #### All features
 
 ```xml
@@ -68,7 +76,7 @@ This will invoke 4 msbuild instances in parallel:
 Inspiration
 -----------
 
-It's quite similar to the MSBuildExtensionPack Parallel task (http://www.msbuildextensionpack.com/help/4.0.8.0/html/23e4198a-c266-e8a3-4aea-7cf131a0837c.htm) but differs in the way it is invoked, making it significantly easier to pass existing properties without worrying about escaping values for command-line execution. I wrote this because I was trying to use parallel tasks in a complex project, and MSBuildExtensionPack's implementation meant I had giant easy-to-mess-up blocks of parameters to be passed to each invokation, and it quickly became unreadable.
+It's quite similar to the MSBuildExtensionPack Parallel task (http://www.msbuildextensionpack.com/help/4.0.8.0/html/23e4198a-c266-e8a3-4aea-7cf131a0837c.htm) but differs in the way it is invoked, making it significantly easier to pass existing properties without worrying about escaping values for command-line execution. I wrote this because I was trying to use parallel tasks in a complex project, and MSBuildExtensionPack's implementation meant I had giant easy-to-mess-up blocks of parameters to be passed to each invocation, and it quickly became unreadable.
 
 License
 -------
