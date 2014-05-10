@@ -99,7 +99,7 @@ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND 
                         var globalValues = new Dictionary<string,string>();
                         
                         // find global values from GlobalProperties
-                        var globalPropertyNames = GlobalProperties.Split(';');
+                        var globalPropertyNames = String.IsNullOrEmpty(GlobalProperties) ? (new string[]{}) : GlobalProperties.Split(';');
                         foreach(var item in BuildEngine.GetProperties().Where(x => globalPropertyNames.Contains(x.Key))) globalValues.Add(item.Key, item.Value);
                         
                         // find global values from Target _global 
