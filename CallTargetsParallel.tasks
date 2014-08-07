@@ -66,9 +66,9 @@ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND 
           need to be called to set property values.
     
     Notes:
-        * This is loosely based on the MSBuildExtensionPack Parallel class (http://www.msbuildextensionpack.com/help/4.0.8.0/html/23e4198a-c266-e8a3-4aea-7cf131a0837c.htm)
-          but designed to be much easier to call, and more of a drop-in replacement to the built-in CallTargets task.
-
+        * This is inspired by the MSBuildExtensionPack Parallel class (http://www.msbuildextensionpack.com/help/4.0.8.0/html/23e4198a-c266-e8a3-4aea-7cf131a0837c.htm)
+          but is much easier to call.
+          
     -->
     <UsingTask TaskName="CallTargetsParallel" TaskFactory="CodeTaskFactory" AssemblyFile="$(MSBuildToolsPath)\Microsoft.Build.Tasks.v4.0.dll">
         <ParameterGroup>
@@ -272,6 +272,35 @@ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND 
                         }
                         
                     }
+                    
+                    private string EscapeMsbuildCommandLineParameter(string paramName, string value)
+                    {
+                        // Generally, we just need to escape " with \"
+                        // However, because we enclose value in quotes, if the last character 
+                        // happens to be a literal \, it will in turn escape the enclosing quote,
+                        // and so the \ needs to be escaped. 
+                        if (value.EndsWith(@"\")) {
+                            value = value.Remove(value.Length - 1) + @"\\";
+                        }
+                        return string.Format("{0}=\"{1}\"", paramName, value.Replace("\"","\\\""));
+                    }
+                    
+                    /*
+                    private void TestEscapeMsbuildCommandLineParameter() {
+                        Action<string,string> AssertEquals = (actual,expected) => {
+                            if (actual == expected) {
+                                Console.WriteLine("PASS: Expected: {0}", expected);
+                            } else {
+                                throw new InvalidOperationException(string.Format("FAIL: Expected: {0}, Actual: {1}", expected,actual));
+                            }
+                        };
+                        AssertEquals(EscapeMsbuildCommandLineParameter("p","Value1"), "p=\"Value1\"");
+                        AssertEquals(EscapeMsbuildCommandLineParameter("p","Value\\1"), "p=\"Value\\1\"");
+                        AssertEquals(EscapeMsbuildCommandLineParameter("p","Value\"1"), "p=\"Value\\\"1\"");
+                        AssertEquals(EscapeMsbuildCommandLineParameter("p","\"Value1\""), "p=\"\\\"Value1\\\"\"");
+                        AssertEquals(EscapeMsbuildCommandLineParameter("p","\\Value\\1\\"), "p=\"\\Value\\1\\\\\"");
+                    }
+                    */
                 }
                 
                 public static class BuildEngineExtensions
