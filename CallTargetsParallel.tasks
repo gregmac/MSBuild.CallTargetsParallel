@@ -66,7 +66,9 @@ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND 
           need to be called to set property values.
     
     Notes:
-        * This is loosely based 
+        * This is loosely based on the MSBuildExtensionPack Parallel class (http://www.msbuildextensionpack.com/help/4.0.8.0/html/23e4198a-c266-e8a3-4aea-7cf131a0837c.htm)
+          but designed to be much easier to call, and more of a drop-in replacement to the built-in CallTargets task.
+
     -->
     <UsingTask TaskName="CallTargetsParallel" TaskFactory="CodeTaskFactory" AssemblyFile="$(MSBuildToolsPath)\Microsoft.Build.Tasks.v4.0.dll">
         <ParameterGroup>
