@@ -124,14 +124,18 @@ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND 
                         var tasks  = new Dictionary<string,System.Threading.Tasks.Task<int>>();
                         foreach (var target in Targets.Where(x => !x.ItemSpec.StartsWith("_"))) 
                         {
+                            var logPrefix = string.Format("[PARALLEL {0}]", target.ItemSpec);
                             Action<String,MessageImportance> logFunction = (message, importance) => {
-                                var logPrefix = string.Format("[PARALLEL {0}]", target.ItemSpec);
                                 if (teamcityOutput) {
                                     Log.LogMessage("##teamcity[message text='{0}' flowId='{1}']", EsacpeTeamcityText(message), EsacpeTeamcityText(logPrefix));
                                 } else {
                                     Log.LogMessage(importance, logPrefix + " " + message);
                                 }
                             };
+                            if (teamcityOutput) {
+                                Log.LogMessage("##teamcity[blockOpened name='{0}' flowId='{0}']", EsacpeTeamcityText(logPrefix));
+                            }
+                            
                             var targetProperties = GetMetadataValues(target);
                             var properties = targetProperties.Where(x => !DisallowedPropertyMetadata.Contains(x.Key))
                                                 .Concat(globalValues.Where( x=> !targetProperties.Keys.Contains(x.Key)));
@@ -153,15 +157,20 @@ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND 
                                     logFunction(string.Format("Property: {0} = {1}", item.Key, item.Value), MessageImportance.Normal);
                                 }
                                 
-                                tasks.Add(target.ItemSpec, 
-                                    System.Threading.Tasks.Task<int>.Factory.StartNew(() => {
-                                        return ExecuteMsBuild(
-                                            logFunction,
-                                            projectFile,
-                                            targets,
-                                            properties
-                                            ); 
-                                    }));
+                                var execTask = System.Threading.Tasks.Task<int>.Factory.StartNew(() => {
+                                    return ExecuteMsBuild(
+                                        logFunction,
+                                        projectFile,
+                                        targets,
+                                        properties
+                                        ); 
+                                });
+                                execTask.ContinueWith(t => {
+                                    if (teamcityOutput) {
+                                        Log.LogMessage("##teamcity[blockClosed name='{0}' flowId='{0}']", EsacpeTeamcityText(logPrefix));
+                                    }                                        
+                                });
+                                tasks.Add(target.ItemSpec, execTask);
                             }
                         }
                         
