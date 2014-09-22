@@ -104,6 +104,9 @@ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND 
                         var globalPropertyNames = String.IsNullOrEmpty(GlobalProperties) ? (new string[]{}) : GlobalProperties.Split(';');
                         foreach(var item in BuildEngine.GetProperties().Where(x => globalPropertyNames.Contains(x.Key))) globalValues.Add(item.Key, item.Value);
                         
+                        
+                        var teamcityOutput = !string.IsNullOrEmpty("$(TEAMCITY_VERSION)");
+                        
                         // find global values from Target _global 
                         var globalTarget = Targets.FirstOrDefault(x => x.ItemSpec == "_global");
                         if (globalTarget != null)
@@ -147,7 +150,13 @@ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND 
                                 tasks.Add(target.ItemSpec, 
                                     System.Threading.Tasks.Task<int>.Factory.StartNew(() => {
                                         return ExecuteMsBuild(
-                                            logPrefix,
+                                            (message, importance) => {
+                                                if (teamcityOutput) {
+                                                    Log.LogMessage("##teamcity[message text='{0}' flowId='{1}']", EsacpeTeamcityText(message), logPrefix);
+                                                } else {
+                                                    Log.LogMessage(importance, logPrefix + " " + message);
+                                                }
+                                            },
                                             projectFile,
                                             targets,
                                             properties
@@ -179,7 +188,7 @@ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND 
                     
                     
                     
-                    public int ExecuteMsBuild(string logPrefix, string projectFile, string targets, IEnumerable<KeyValuePair<string,string>> properties) 
+                    public int ExecuteMsBuild(Action<String,MessageImportance> logCallback, string projectFile, string targets, IEnumerable<KeyValuePair<string,string>> properties) 
                     {
                         var propertiesString = string.Join(";", properties.Select(x => EscapeMsbuildCommandLineParameter(x.Key, x.Value)));
                         
@@ -188,7 +197,7 @@ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND 
                                           targets,
                                           propertiesString);
                                           
-                        Log.LogMessage(string.Format("{0} Executing: msbuild.exe {1}", logPrefix, msbuildParams));
+                        logCallback(string.Format("Executing: msbuild.exe {0}", msbuildParams), MessageImportance.Normal);
                         
                         using (var proc = new Process())
                         {
@@ -206,7 +215,7 @@ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND 
                                                           {
                                                               if (e.Data != null)
                                                               {
-                                                                  Log.LogError("{0} ** {1}", logPrefix, e.Data);
+                                                                  logCallback(string.Format("** {0}", e.Data), MessageImportance.Normal);
                                                               }
                                                           };
 
@@ -234,7 +243,7 @@ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND 
                                                 captureMsbuildErrorOutput = true; // start capturing error output after this line 
                                             }
                                             
-                                            Log.LogMessage(buildFailed ? MessageImportance.High : MessageImportance.Normal,  "{0} ** {1}", logPrefix, e.Data);
+                                            logCallback(String.Format("** {0}", e.Data), buildFailed ? MessageImportance.High : MessageImportance.Normal);
                                         }
                                         catch
                                         {
@@ -262,11 +271,11 @@ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND 
                 
                             if (proc.ExitCode != 0)
                             {
-                                Log.LogError("{0} Exit code {1}\n{2}", logPrefix, proc.ExitCode, msbuildErrorOutput.ToString().TrimEnd());
+                                logCallback(string.Format("Exit code {0}\n{1}", proc.ExitCode, msbuildErrorOutput.ToString().TrimEnd()), MessageImportance.Normal);
                             } 
                             else 
                             {
-                                Log.LogMessage("{0} Exit code {1}", logPrefix, proc.ExitCode);
+                                logCallback(string.Format("Exit code {0}", proc.ExitCode), MessageImportance.Normal);
                             }
                             return proc.ExitCode;
                         }
@@ -284,6 +293,19 @@ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND 
                         }
                         return string.Format("{0}=\"{1}\"", paramName, value.Replace("\"","\\\""));
                     }
+                    
+                    private string EsacpeTeamcityText(string text) {
+                        return text.Replace("|", "||")
+                                   .Replace("'", "|'")
+                                   .Replace("\n", "|n")
+                                   .Replace("\r", "|r")
+                                   .Replace("\u0085", "|x")
+                                   .Replace("\u2028", "|l")
+                                   .Replace("\u2029", "|p")
+                                   .Replace("[", "|[")
+                                   .Replace("]", "|]");
+                    }
+                    
                     
                     /*
                     private void TestEscapeMsbuildCommandLineParameter() {
