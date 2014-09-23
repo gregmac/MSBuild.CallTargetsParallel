@@ -104,9 +104,6 @@ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND 
                         var globalPropertyNames = String.IsNullOrEmpty(GlobalProperties) ? (new string[]{}) : GlobalProperties.Split(';');
                         foreach(var item in BuildEngine.GetProperties().Where(x => globalPropertyNames.Contains(x.Key))) globalValues.Add(item.Key, item.Value);
                         
-                        
-                        var teamcityOutput = !string.IsNullOrEmpty("$(TEAMCITY_VERSION)");
-                        
                         // find global values from Target _global 
                         var globalTarget = Targets.FirstOrDefault(x => x.ItemSpec == "_global");
                         if (globalTarget != null)
@@ -125,16 +122,6 @@ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND 
                         foreach (var target in Targets.Where(x => !x.ItemSpec.StartsWith("_"))) 
                         {
                             var logPrefix = string.Format("[PARALLEL {0}]", target.ItemSpec);
-                            Action<String,MessageImportance> logFunction = (message, importance) => {
-                                if (teamcityOutput) {
-                                    Log.LogMessage("##teamcity[message text='{0}' flowId='{1}']", EsacpeTeamcityText(message), EsacpeTeamcityText(logPrefix));
-                                } else {
-                                    Log.LogMessage(importance, logPrefix + " " + message);
-                                }
-                            };
-                            if (teamcityOutput) {
-                                Log.LogMessage("##teamcity[blockOpened name='{0}' flowId='{0}']", EsacpeTeamcityText(logPrefix));
-                            }
                             
                             var targetProperties = GetMetadataValues(target);
                             var properties = targetProperties.Where(x => !DisallowedPropertyMetadata.Contains(x.Key))
@@ -145,32 +132,27 @@ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND 
                             var projectFile = targetProperties.ContainsKey("MSBuildFile") ? targetProperties["MSBuildFile"] : defaultProjectFile;
                             
                             if (!System.IO.File.Exists(projectFile)) {
-                                logFunction(string.Format("Project file {0} does not exist!", projectFile), MessageImportance.High);
+                                Log.LogError("{0} Project file {1} does not exist!", logPrefix, projectFile);
                             }
                             else 
                             {
                             
-                                logFunction(string.Format("Targets: {0}", targets), MessageImportance.High);
-                                logFunction(string.Format("Project: {0}", projectFile), MessageImportance.Normal);
+                                Log.LogMessage(MessageImportance.High, "{0} Targets: {1}", logPrefix, targets);
+                                Log.LogMessage("{0} Project: {1}", logPrefix, projectFile);
                                 foreach (var item in properties)
                                 {
-                                    logFunction(string.Format("Property: {0} = {1}", item.Key, item.Value), MessageImportance.Normal);
+                                    Log.LogMessage("{0} Property: {1} = {2}", logPrefix, item.Key, item.Value);
                                 }
                                 
-                                var execTask = System.Threading.Tasks.Task<int>.Factory.StartNew(() => {
-                                    return ExecuteMsBuild(
-                                        logFunction,
-                                        projectFile,
-                                        targets,
-                                        properties
-                                        ); 
-                                });
-                                execTask.ContinueWith(t => {
-                                    if (teamcityOutput) {
-                                        Log.LogMessage("##teamcity[blockClosed name='{0}' flowId='{0}']", EsacpeTeamcityText(logPrefix));
-                                    }                                        
-                                });
-                                tasks.Add(target.ItemSpec, execTask);
+                                tasks.Add(target.ItemSpec, 
+                                    System.Threading.Tasks.Task<int>.Factory.StartNew(() => {
+                                        return ExecuteMsBuild(
+                                            logPrefix,
+                                            projectFile,
+                                            targets,
+                                            properties
+                                            ); 
+                                    }));
                             }
                         }
                         
@@ -197,7 +179,7 @@ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND 
                     
                     
                     
-                    public int ExecuteMsBuild(Action<String,MessageImportance> logCallback, string projectFile, string targets, IEnumerable<KeyValuePair<string,string>> properties) 
+                    public int ExecuteMsBuild(string logPrefix, string projectFile, string targets, IEnumerable<KeyValuePair<string,string>> properties) 
                     {
                         var propertiesString = string.Join(";", properties.Select(x => EscapeMsbuildCommandLineParameter(x.Key, x.Value)));
                         
@@ -206,7 +188,7 @@ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND 
                                           targets,
                                           propertiesString);
                                           
-                        logCallback(string.Format("Executing: msbuild.exe {0}", msbuildParams), MessageImportance.Normal);
+                        Log.LogMessage(string.Format("{0} Executing: msbuild.exe {1}", logPrefix, msbuildParams));
                         
                         using (var proc = new Process())
                         {
@@ -224,7 +206,7 @@ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND 
                                                           {
                                                               if (e.Data != null)
                                                               {
-                                                                  logCallback(string.Format("** {0}", e.Data), MessageImportance.Normal);
+                                                                  Log.LogError("{0} ** {1}", logPrefix, e.Data);
                                                               }
                                                           };
 
@@ -252,7 +234,7 @@ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND 
                                                 captureMsbuildErrorOutput = true; // start capturing error output after this line 
                                             }
                                             
-                                            logCallback(String.Format("** {0}", e.Data), buildFailed ? MessageImportance.High : MessageImportance.Normal);
+                                            Log.LogMessage(buildFailed ? MessageImportance.High : MessageImportance.Normal,  "{0} ** {1}", logPrefix, e.Data);
                                         }
                                         catch
                                         {
@@ -280,11 +262,11 @@ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND 
                 
                             if (proc.ExitCode != 0)
                             {
-                                logCallback(string.Format("Exit code {0}\n{1}", proc.ExitCode, msbuildErrorOutput.ToString().TrimEnd()), MessageImportance.Normal);
+                                Log.LogError("{0} Exit code {1}\n{2}", logPrefix, proc.ExitCode, msbuildErrorOutput.ToString().TrimEnd());
                             } 
                             else 
                             {
-                                logCallback(string.Format("Exit code {0}", proc.ExitCode), MessageImportance.Normal);
+                                Log.LogMessage("{0} Exit code {1}", logPrefix, proc.ExitCode);
                             }
                             return proc.ExitCode;
                         }
@@ -302,19 +284,6 @@ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND 
                         }
                         return string.Format("{0}=\"{1}\"", paramName, value.Replace("\"","\\\""));
                     }
-                    
-                    private string EsacpeTeamcityText(string text) {
-                        return text.Replace("|", "||")
-                                   .Replace("'", "|'")
-                                   .Replace("\n", "|n")
-                                   .Replace("\r", "|r")
-                                   .Replace("\u0085", "|x")
-                                   .Replace("\u2028", "|l")
-                                   .Replace("\u2029", "|p")
-                                   .Replace("[", "|[")
-                                   .Replace("]", "|]");
-                    }
-                    
                     
                     /*
                     private void TestEscapeMsbuildCommandLineParameter() {
